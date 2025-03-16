@@ -33,6 +33,7 @@ import logging
 import os
 import pdb
 import re
+import sys
 import time
 import warnings
 from enum import auto
@@ -150,7 +151,9 @@ class RegressionManager:
 
         self.xunit = XUnitReporter(filename=results_filename)
         self.xunit.add_testsuite(name=suite_name, package=package_name)
-        self.xunit.add_property(name="random_seed", value=str(cocotb._random_seed))
+        self.xunit.add_property(
+            name="random_seed", value=str(getattr(cocotb, "_random_seed", 0))
+        )
 
     def discover_tests(self, *modules: str) -> None:
         """Discover tests in files automatically.
@@ -278,6 +281,66 @@ class RegressionManager:
         self._regression_start_time = time.time()
         self._first_test = True
         self._execute()
+
+    @staticmethod
+    def create(name: str = "") -> "RegressionManager":
+        """Create new instance of regression manager. It follows factory design pattern.
+
+        Args:
+            name: Name of external Cocotb plugin to load and use to create new instance of regression manager.
+                  If not provided, get plugin name from `COCOTB_REGRESSION_MANAGER` environment variable.
+                  If name was not set, create default instance of Cocotb regression manager.
+
+        Returns:
+            New created instance of regression manager. Built-in (default) or from external Cocotb plugin.
+        """
+        if not name:
+            name = os.getenv("COCOTB_REGRESSION_MANAGER", "").strip()
+
+        if not name:
+            return RegressionManager()  # Create default Cocotb regression manager
+
+        # https://packaging.python.org/en/latest/guides/creating-and-discovering-plugins/#using-package-metadata
+        if sys.version_info < (3, 10):
+            import importlib_metadata
+        else:
+            import importlib.metadata as importlib_metadata
+
+        # Create new instance of regression manager from external plugin
+        discovered_plugins = importlib_metadata.entry_points(group="cocotb")
+
+        if name not in discovered_plugins.names:
+            raise RuntimeError(f"Cocotb plugin '{name}' wasn't registered!")
+
+        plugin = discovered_plugins[name].load()
+        attr: str = "cocotb_register_regression_manager"
+        register: Callable | None = getattr(plugin, attr, None)
+
+        if not register:
+            raise RuntimeError(
+                f"Cocotb plugin '{name}' doesn't provide '{attr}' attribute!"
+            )
+
+        if not isinstance(register, Callable):
+            raise RuntimeError(
+                f"Cocotb plugin attribute '{name}.{attr}' is not callable!"
+            )
+
+        create: Callable = register()
+
+        if not isinstance(create, Callable):
+            raise RuntimeError(
+                f"Returned {create} from Cocotb plugin '{name}.{attr}()' is not callable!"
+            )
+
+        instance: RegressionManager = create()
+
+        if not isinstance(instance, RegressionManager):
+            raise RuntimeError(
+                f"Cocotb plugin '{name}' doesn't implement {RegressionManager}!"
+            )
+
+        return instance
 
     def _execute(self) -> None:
         """Run the main regression loop.

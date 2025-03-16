@@ -282,7 +282,7 @@ def _setup_root_handle() -> None:
 
 
 def _setup_regression_manager() -> None:
-    cocotb.regression_manager = RegressionManager()
+    cocotb.regression_manager = RegressionManager.create()
 
     # discover tests
     module_str = os.getenv("COCOTB_TEST_MODULES", "")
